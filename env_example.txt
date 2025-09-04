@@ -1,0 +1,24 @@
+# Telegram Bot Configuration
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_CHANNELS=@channel1,@channel2
+
+# Solana RPC Configuration
+RPC_URL=https://mainnet.helius-rpc.com/?api-key=your_helius_api_key
+WALLET_PRIVATE_KEY=your_wallet_private_key_base58_or_json_array
+
+# Trading Configuration
+TRADE_AMOUNT_USD=10
+STOP_LOSS_PCT=-30
+TRAIL_FROM_PEAK_PCT=15
+TP_LADDER=2x:25,4x:25,10x:30,rest:trail15
+
+# Re-entry Configuration
+REENTRY_ENABLED=true
+REENTRY_CONFIRM_PCT=7
+MAX_REENTRIES_PER_TOKEN=1
+
+# System Configuration
+DRY_RUN=true
+PRICE_POLL_SECONDS=0.5
+PRIORITY_FEE_MICROLAMPORTS=20000
+MIN_LIQ_SOL=10
