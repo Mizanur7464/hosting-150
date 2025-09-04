@@ -18,7 +18,7 @@ TELEGRAM_CHANNELS = ["@gem_tools_calls"]  # Only monitor gem_tools_calls
 # Solana RPC Configuration
 RPC_URL = "https://mainnet.helius-rpc.com/?api-key=6fbd7c3d-4f61-436a-9fcd-4893a653b402"
 WSS_URL = RPC_URL.replace("https://", "wss://")  # Helius WebSocket
-WALLET_PRIVATE_KEY = "4X5MC6pymsnjDyV9UPVbszWdiTSvYND2FrYpZFBXXmoRAdkeCGc9mpVRBP2K2hvxqvEKR5SpEKcmGc7k4EBAacQd"  # Add your actual private key here
+WALLET_PRIVATE_KEY = "2afY6GD9APZorfxQVqDNXtkEsH1uVyi2TDcyPAYCLsnNMjmXgTKuSrVzPjmscVhbhKFW8EjP3wd7imuu6kDHnds6"  # Add your actual private key here
 # Trading Configuration
 TRADE_AMOUNT_USD = 10.0           # Fallback amount if percentage fails
 TRADE_PERCENTAGE = 5.0            # Percentage of wallet to trade (5%)
