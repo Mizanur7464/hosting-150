@@ -5,14 +5,14 @@ from typing import Dict, Optional, List
 import httpx
 import websockets
 import base58
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 
 # ================== CONFIG ==================
 print("🔍 Loading configuration...")
 
 # Telegram Bot Configuration
-BOT_TOKEN = "7360756398:AAGgUU0CqFRiYRpEXp5WVoGNqgCWe2nKrkM"
+BOT_TOKEN = "8147677560:AAHsJ9h1dRkGG9UJvs_2YBGkqRtBB0ZMgUs"
 TELEGRAM_CHANNELS = ["@gem_tools_calls"]  # Only monitor gem_tools_calls
 
 # Solana RPC Configuration
@@ -37,6 +37,9 @@ DRY_RUN = False  # Enable real trading
 PRICE_POLL_SECONDS = 0.5          # fast polling
 PRIORITY_FEE_MICROLAMPORTS = 20000
 MIN_LIQ_SOL = 10.0
+
+# User state tracking
+user_states = {}  # Track user states for private key input
 
 # Channel list
 CHANNELS = TELEGRAM_CHANNELS
@@ -549,12 +552,32 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     trade_amount = await calculate_trade_amount()
     trading_mode = f"{TRADE_PERCENTAGE}% of wallet" if USE_PERCENTAGE_TRADING else f"${TRADE_AMOUNT_USD} fixed"
     
+    # Create main menu
+    keyboard = [
+        [InlineKeyboardButton("⚓ Wallet Dock", callback_data="wallet_dock")],
+        [InlineKeyboardButton("⚔️ Trade Settings", callback_data="trade_settings")],
+        [InlineKeyboardButton("🌊 Leviathan Mode", callback_data="leviathan_mode")],
+        [InlineKeyboardButton("🪝 Sniping Grounds", callback_data="sniping_grounds")],
+        [InlineKeyboardButton("📜 Navigation & Logs", callback_data="navigation_logs")],
+        [InlineKeyboardButton("⚙️ Leviathan Forge", callback_data="leviathan_forge")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
     await update.message.reply_text(
-        f"✅ Sniper online (DRY_RUN: {DRY_RUN})\n"
+        f"🌊 Welcome to Leviathan86Bot 🐉\n\n"
+        f"From the depths of the crypto seas, the Leviathan rises.\n"
+        f"An unstoppable force, carving through the tides of meme coins and alt markets alike.\n\n"
+        f"With your wallets as its vessel, Leviathan86Bot hunts, trades, and strikes automatically — seizing opportunity before it slips beneath the waves.\n\n"
+        f"Brace yourself. Once awakened, the Leviathan doesn't ask. It takes.\n\n"
+        f"⚡️ Connect your wallet. Unleash the beast. Rule the crypton seas.\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 Bot Status: {'LIVE TRADING' if not DRY_RUN else 'DRY RUN MODE'}\n"
         f"💰 Trading: {trading_mode} (${trade_amount:.2f})\n"
-        f"SL {STOP_LOSS_PCT}% | Trail {TRAIL_FROM_PEAK_PCT}% | Ladder {TP_LADDER} | Re-entry {REENTRY_ENABLED} ({MAX_REENTRIES_PER_TOKEN} max, +{REENTRY_CONFIRM_PCT}% confirm)\n"
-        f"Watching: {', '.join(CHANNELS)}\n\n"
-        f"👤 User: {full_name} (@{username})"
+        f"🛡️ SL: {STOP_LOSS_PCT}% | Trail: {TRAIL_FROM_PEAK_PCT}% | Ladder: {TP_LADDER}\n"
+        f"♻️ Re-entry: {REENTRY_ENABLED} ({MAX_REENTRIES_PER_TOKEN} max, +{REENTRY_CONFIRM_PCT}% confirm)\n"
+        f"👀 Watching: {', '.join(CHANNELS)}\n"
+        f"👤 User: {full_name} (@{username})",
+        reply_markup=reply_markup
     )
 
 async def cmd_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -622,20 +645,883 @@ async def handle_channel_message(update: Update, context: ContextTypes.DEFAULT_T
     if not update.effective_chat or not msg or not msg.text:
         return
     chat = update.effective_chat
-    if chat.username and f"@{chat.username}" not in CHANNELS:
+    
+    print(f"\n📨 Message Received:")
+    print(f"   💬 Chat Type: {chat.type}")
+    print(f"   👤 Username: {chat.username}")
+    print(f"   📝 Text: {msg.text[:50]}...")
+    print(f"   👤 User ID: {update.effective_user.id}")
+    
+    # Check if this is a channel message
+    if chat.username and f"@{chat.username}" in CHANNELS:
+        # Print channel message info
+        print(f"\n📢 Channel Message:")
+        print(f"   📺 Channel: @{chat.username}")
+        print(f"   💬 Message: {msg.text[:100]}...")
+        print(f"   ⏰ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("=" * 50)
+        
+        for m in parse_signal(msg.text):
+            # fast-path: same as /buy
+            fake_update = update
+            await cmd_buy(fake_update, context)
+    
+    # Check if this is a private message from user waiting for private key
+    elif chat.type == "private":  # Private chat
+        user_id = update.effective_user.id
+        print(f"   🔍 User State: {user_states.get(user_id, 'None')}")
+        
+        if user_id in user_states and user_states[user_id] == "waiting_for_private_key":
+            print(f"   ✅ Handling private key input...")
+            await handle_private_key_input(update, context)
+        else:
+            print(f"   ❌ User not in waiting state, checking for token signals...")
+            # Regular private message - check for token signals
+            for m in parse_signal(msg.text):
+                fake_update = update
+                await cmd_buy(fake_update, context)
+
+async def handle_private_key_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle private key input from user"""
+    user_id = update.effective_user.id
+    private_key_str = update.effective_message.text.strip()
+    
+    print(f"\n🔑 Private Key Input Received:")
+    print(f"   👤 User ID: {user_id}")
+    print(f"   🔑 Key: {private_key_str[:20]}...{private_key_str[-20:]}")
+    print(f"   📏 Length: {len(private_key_str)}")
+    
+    # Clear user state
+    user_states.pop(user_id, None)
+    
+    # Try to parse the private key
+    private_key_bytes = parse_private_key(private_key_str)
+    print(f"   🔍 Parsed bytes length: {len(private_key_bytes) if private_key_bytes else 'None'}")
+    
+    if private_key_bytes:
+        # Generate wallet address from private key
+        try:
+            # For Solana, the public key is derived from the first 32 bytes of the private key
+            if len(private_key_bytes) >= 32:
+                wallet_address = base58.b58encode(private_key_bytes[:32]).decode('utf-8')
+            else:
+                # If private key is shorter, pad it
+                padded_key = private_key_bytes + b'\x00' * (32 - len(private_key_bytes))
+                wallet_address = base58.b58encode(padded_key).decode('utf-8')
+            
+            # Update global wallet private key
+            global WALLET_PRIVATE_KEY
+            WALLET_PRIVATE_KEY = private_key_str
+            
+            keyboard = [
+                [InlineKeyboardButton("🔙 Back to Wallet Dock", callback_data="wallet_dock")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                f"✅ **Vessel Added Successfully!**\n\n"
+                f"**Wallet Address**: `{wallet_address[:8]}...{wallet_address[-8:]}`\n"
+                f"**Status**: 🟢 Connected\n"
+                f"**Private Key**: Valid format detected\n\n"
+                f"The Leviathan now has access to this vessel for trading!",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            
+            print(f"\n🔑 New Wallet Added:")
+            print(f"   👤 User: {update.effective_user.first_name}")
+            print(f"   🏦 Address: {wallet_address}")
+            print(f"   ⏰ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print("=" * 50)
+            
+        except Exception as e:
+            keyboard = [
+                [InlineKeyboardButton("🔙 Back to Wallet Dock", callback_data="wallet_dock")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                f"❌ **Invalid Private Key Format**\n\n"
+                f"**Error**: {str(e)}\n\n"
+                f"**Supported Formats:**\n"
+                f"• Base58 (88 characters)\n"
+                f"• Hex string (64 characters)\n"
+                f"• JSON array format\n\n"
+                f"Please try again with a valid private key.",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+    else:
+        keyboard = [
+            [InlineKeyboardButton("🔙 Back to Wallet Dock", callback_data="wallet_dock")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            f"❌ **Invalid Private Key**\n\n"
+            f"**Error**: Could not parse private key\n\n"
+            f"**Supported Formats:**\n"
+            f"• Base58 (88 characters)\n"
+            f"• Hex string (64 characters)\n"
+            f"• JSON array format\n\n"
+            f"Please try again with a valid private key.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+# ================== INLINE KEYBOARD HANDLERS ==================
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "wallet_dock":
+        await show_wallet_dock(query)
+    elif query.data == "trade_settings":
+        await show_trade_settings(query)
+    elif query.data == "leviathan_mode":
+        await show_leviathan_mode(query)
+    elif query.data == "sniping_grounds":
+        await show_sniping_grounds(query)
+    elif query.data == "navigation_logs":
+        await show_navigation_logs(query)
+    elif query.data == "leviathan_forge":
+        await show_leviathan_forge(query)
+    elif query.data == "back_to_main":
+        await show_main_menu(query)
+    
+    # Wallet Dock Actions
+    elif query.data == "add_wallet":
+        await add_wallet_action(query)
+    elif query.data == "view_fleet":
+        await view_fleet_action(query)
+    elif query.data == "remove_wallet":
+        await remove_wallet_action(query)
+    elif query.data == "confirm_remove":
+        await confirm_remove_action(query)
+    
+    # Trade Settings Actions
+    elif query.data == "set_percentage":
+        await set_percentage_action(query)
+    elif query.data == "set_fixed":
+        await set_fixed_action(query)
+    elif query.data == "check_settings":
+        await check_settings_action(query)
+    
+    # Leviathan Mode Actions
+    elif query.data == "awaken_beast":
+        await awaken_beast_action(query)
+    elif query.data == "sleep_beast":
+        await sleep_beast_action(query)
+    elif query.data == "beast_status":
+        await beast_status_action(query)
+    
+    # Sniping Grounds Actions
+    elif query.data == "add_channel":
+        await add_channel_action(query)
+    elif query.data == "view_channels":
+        await view_channels_action(query)
+    elif query.data == "remove_channel":
+        await remove_channel_action(query)
+    
+    # Navigation & Logs Actions
+    elif query.data == "battle_history":
+        await battle_history_action(query)
+    elif query.data == "war_chest":
+        await war_chest_action(query)
+    elif query.data == "notifications":
+        await notifications_action(query)
+    
+    # Leviathan Forge Actions
+    elif query.data == "adjust_stops":
+        await adjust_stops_action(query)
+    elif query.data == "ladder_strategy":
+        await ladder_strategy_action(query)
+    elif query.data == "reentry_tide":
+        await reentry_tide_action(query)
+    
+    # Percentage Selection
+    elif query.data.startswith("set_pct_"):
+        percentage = float(query.data.split("_")[2])
+        await set_percentage_value(query, percentage)
+    
+    # Fixed Amount Selection
+    elif query.data.startswith("set_fixed_"):
+        amount = float(query.data.split("_")[2])
+        await set_fixed_value(query, amount)
+    
+    # Channel Management
+    elif query.data.startswith("remove_ch_"):
+        channel = query.data.split("_", 2)[2]
+        await remove_specific_channel(query, channel)
+
+async def show_wallet_dock(query):
+    keyboard = [
+        [InlineKeyboardButton("➕ Add Vessel", callback_data="add_wallet")],
+        [InlineKeyboardButton("👁️ View Fleet", callback_data="view_fleet")],
+        [InlineKeyboardButton("🗑️ Remove Vessel", callback_data="remove_wallet")],
+        [InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "⚓ **Wallet Dock**\n\n"
+        "Manage your connected wallets and vessel fleet.\n\n"
+        "• **Add Vessel**: Connect a new wallet to the Leviathan\n"
+        "• **View Fleet**: See all connected wallets and balances\n"
+        "• **Remove Vessel**: Disconnect a wallet from the fleet",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_trade_settings(query):
+    keyboard = [
+        [InlineKeyboardButton("📊 Set Tribute %", callback_data="set_percentage")],
+        [InlineKeyboardButton("💰 Set Fixed Strike", callback_data="set_fixed")],
+        [InlineKeyboardButton("🔍 Check Current Loadout", callback_data="check_settings")],
+        [InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "⚔️ **Trade Settings**\n\n"
+        "Configure your trading strategy and strike patterns.\n\n"
+        "• **Set Tribute %**: Choose % of wallet balance per trade (5%, 10%, 20%)\n"
+        "• **Set Fixed Strike**: Choose fixed trade sizes ($10, $20, $50, etc.)\n"
+        "• **Check Current Loadout**: View active trade settings",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_leviathan_mode(query):
+    status = "🌊 AWAKE" if not DRY_RUN else "😴 SLEEPING"
+    keyboard = [
+        [InlineKeyboardButton("🌊 Awaken Beast", callback_data="awaken_beast")],
+        [InlineKeyboardButton("😴 Send to Depths", callback_data="sleep_beast")],
+        [InlineKeyboardButton("📊 Status of the Beast", callback_data="beast_status")],
+        [InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"🌊 **Leviathan Mode**\n\n"
+        f"Control the beast's trading state.\n\n"
+        f"**Current Status**: {status}\n\n"
+        "• **Awaken Beast**: Turn bot ON (auto-trading active)\n"
+        "• **Send to Depths**: Turn bot OFF (pause trading)\n"
+        "• **Status of the Beast**: Show if bot is currently trading or sleeping",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_sniping_grounds(query):
+    keyboard = [
+        [InlineKeyboardButton("📍 Mark New Waters", callback_data="add_channel")],
+        [InlineKeyboardButton("👁️ Survey the Waters", callback_data="view_channels")],
+        [InlineKeyboardButton("🗑️ Abandon Waters", callback_data="remove_channel")],
+        [InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "🪝 **Sniping Grounds**\n\n"
+        "Manage your hunting grounds and signal sources.\n\n"
+        "• **Mark New Waters**: Add Telegram groups to scan/snipe\n"
+        "• **Survey the Waters**: Show current groups monitored\n"
+        "• **Abandon Waters**: Remove groups from monitoring",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_navigation_logs(query):
+    keyboard = [
+        [InlineKeyboardButton("📜 Battle History", callback_data="battle_history")],
+        [InlineKeyboardButton("💰 War Chest", callback_data="war_chest")],
+        [InlineKeyboardButton("🔔 Signals & Whispers", callback_data="notifications")],
+        [InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "📜 **Navigation & Logs**\n\n"
+        "Track your conquests and manage notifications.\n\n"
+        "• **Battle History**: Show recent trades (PnL logs)\n"
+        "• **War Chest**: Show current profits/losses\n"
+        "• **Signals & Whispers**: Notifications / alerts toggle",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_leviathan_forge(query):
+    keyboard = [
+        [InlineKeyboardButton("🛡️ Adjust Trail & Stop", callback_data="adjust_stops")],
+        [InlineKeyboardButton("📈 Ladder Strategy", callback_data="ladder_strategy")],
+        [InlineKeyboardButton("♻️ Re-Entry Tide", callback_data="reentry_tide")],
+        [InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "⚙️ **Leviathan Forge**\n\n"
+        "Fine-tune your trading parameters and strategies.\n\n"
+        "• **Adjust Trail & Stop**: Edit trailing stop %, stop loss %\n"
+        "• **Ladder Strategy**: Adjust scaling buy levels (2x, 4x, 10x)\n"
+        "• **Re-Entry Tide**: Toggle re-entry strategy on/off",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def show_main_menu(query):
+    # Get current trade amount info
+    trade_amount = await calculate_trade_amount()
+    trading_mode = f"{TRADE_PERCENTAGE}% of wallet" if USE_PERCENTAGE_TRADING else f"${TRADE_AMOUNT_USD} fixed"
+    
+    # Create main menu
+    keyboard = [
+        [InlineKeyboardButton("⚓ Wallet Dock", callback_data="wallet_dock")],
+        [InlineKeyboardButton("⚔️ Trade Settings", callback_data="trade_settings")],
+        [InlineKeyboardButton("🌊 Leviathan Mode", callback_data="leviathan_mode")],
+        [InlineKeyboardButton("🪝 Sniping Grounds", callback_data="sniping_grounds")],
+        [InlineKeyboardButton("📜 Navigation & Logs", callback_data="navigation_logs")],
+        [InlineKeyboardButton("⚙️ Leviathan Forge", callback_data="leviathan_forge")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"🌊 Welcome to Leviathan86Bot 🐉\n\n"
+        f"From the depths of the crypto seas, the Leviathan rises.\n"
+        f"An unstoppable force, carving through the tides of meme coins and alt markets alike.\n\n"
+        f"With your wallets as its vessel, Leviathan86Bot hunts, trades, and strikes automatically — seizing opportunity before it slips beneath the waves.\n\n"
+        f"Brace yourself. Once awakened, the Leviathan doesn't ask. It takes.\n\n"
+        f"⚡️ Connect your wallet. Unleash the beast. Rule the crypton seas.\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 Bot Status: {'LIVE TRADING' if not DRY_RUN else 'DRY RUN MODE'}\n"
+        f"💰 Trading: {trading_mode} (${trade_amount:.2f})\n"
+        f"🛡️ SL: {STOP_LOSS_PCT}% | Trail: {TRAIL_FROM_PEAK_PCT}% | Ladder: {TP_LADDER}\n"
+        f"♻️ Re-entry: {REENTRY_ENABLED} ({MAX_REENTRIES_PER_TOKEN} max, +{REENTRY_CONFIRM_PCT}% confirm)\n"
+        f"👀 Watching: {', '.join(CHANNELS)}",
+        reply_markup=reply_markup
+    )
+
+# ================== ACTION FUNCTIONS ==================
+async def add_wallet_action(query):
+    # Set user state to waiting for private key
+    user_id = query.from_user.id
+    user_states[user_id] = "waiting_for_private_key"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Wallet Dock", callback_data="wallet_dock")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "➕ **Add Vessel**\n\n"
+        "To add a new wallet to the Leviathan fleet:\n\n"
+        "1. Send your wallet private key as a message\n"
+        "2. Format: `YOUR_PRIVATE_KEY` (base58, hex, or JSON array)\n"
+        "3. The wallet will be added to the fleet\n\n"
+        "⚠️ **Security Note**: Only send private keys in private chat!\n\n"
+        "**Status**: ⏳ Waiting for private key...",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def view_fleet_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Wallet Dock", callback_data="wallet_dock")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Check if wallet is connected
+    if not WALLET_PRIVATE_KEY or WALLET_PRIVATE_KEY.strip() == "":
+        await query.edit_message_text(
+            f"👁️ **View Fleet**\n\n"
+            f"**Active Vessels:**\n"
+            f"• No vessels connected\n\n"
+            f"**Fleet Summary:**\n"
+            f"• Total Vessels: 0\n"
+            f"• Total Balance: $0.00 USD\n"
+            f"• Ready for Trading: ❌\n\n"
+            f"**Status:** Fleet is empty. Add a vessel to begin trading.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
         return
     
-    # Print channel message info
-    print(f"\n📢 Channel Message:")
-    print(f"   📺 Channel: @{chat.username}")
-    print(f"   💬 Message: {msg.text[:100]}...")
-    print(f"   ⏰ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 50)
+    # Get wallet balance
+    try:
+        balance_usd = await get_wallet_balance_usd()
+        wallet_pubkey = base58.b58encode(parse_private_key(WALLET_PRIVATE_KEY)).decode()
+    except:
+        balance_usd = 0.0
+        wallet_pubkey = "Unknown"
     
-    for m in parse_signal(msg.text):
-        # fast-path: same as /buy
-        fake_update = update
-        await cmd_buy(fake_update, context)
+    await query.edit_message_text(
+        f"👁️ **View Fleet**\n\n"
+        f"**Active Vessels:**\n"
+        f"• **Vessel 1**: `{wallet_pubkey[:8]}...{wallet_pubkey[-8:]}`\n"
+        f"  💰 Balance: ${balance_usd:.2f} USD\n"
+        f"  🟢 Status: Connected\n\n"
+        f"**Fleet Summary:**\n"
+        f"• Total Vessels: 1\n"
+        f"• Total Balance: ${balance_usd:.2f} USD\n"
+        f"• Ready for Trading: ✅",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def remove_wallet_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🗑️ Confirm Remove", callback_data="confirm_remove")],
+        [InlineKeyboardButton("🔙 Back to Wallet Dock", callback_data="wallet_dock")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "🗑️ **Remove Vessel**\n\n"
+        "⚠️ **Warning**: This will disconnect the wallet from the Leviathan fleet.\n\n"
+        "**Current Wallet:**\n"
+        f"• Address: `{base58.b58encode(parse_private_key(WALLET_PRIVATE_KEY)).decode()[:8]}...`\n"
+        f"• Status: Connected\n\n"
+        "Are you sure you want to remove this vessel?",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def confirm_remove_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Wallet Dock", callback_data="wallet_dock")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Clear the wallet private key (reset to empty)
+    global WALLET_PRIVATE_KEY
+    WALLET_PRIVATE_KEY = ""
+    
+    await query.edit_message_text(
+        "✅ **Vessel Removed Successfully**\n\n"
+        "The wallet has been disconnected from the Leviathan fleet.\n\n"
+        "**Status:**\n"
+        "• Wallet: Disconnected\n"
+        "• Trading: Paused\n"
+        "• Fleet Status: Empty\n\n"
+        "To resume trading, add a new vessel using 'Add Vessel'.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def set_percentage_action(query):
+    keyboard = [
+        [InlineKeyboardButton("5%", callback_data="set_pct_5.0")],
+        [InlineKeyboardButton("10%", callback_data="set_pct_10.0")],
+        [InlineKeyboardButton("15%", callback_data="set_pct_15.0")],
+        [InlineKeyboardButton("20%", callback_data="set_pct_20.0")],
+        [InlineKeyboardButton("25%", callback_data="set_pct_25.0")],
+        [InlineKeyboardButton("🔙 Back to Trade Settings", callback_data="trade_settings")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "📊 **Set Tribute %**\n\n"
+        "Choose the percentage of wallet balance to use per trade:\n\n"
+        "**Current Setting:** 5% of wallet balance\n\n"
+        "Select a new percentage:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def set_fixed_action(query):
+    keyboard = [
+        [InlineKeyboardButton("$10", callback_data="set_fixed_10")],
+        [InlineKeyboardButton("$20", callback_data="set_fixed_20")],
+        [InlineKeyboardButton("$50", callback_data="set_fixed_50")],
+        [InlineKeyboardButton("$100", callback_data="set_fixed_100")],
+        [InlineKeyboardButton("$200", callback_data="set_fixed_200")],
+        [InlineKeyboardButton("$500", callback_data="set_fixed_500")],
+        [InlineKeyboardButton("🔙 Back to Trade Settings", callback_data="trade_settings")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "💰 **Set Fixed Strike**\n\n"
+        "Choose a fixed dollar amount per trade:\n\n"
+        "**Current Setting:** 5% of wallet (Dynamic)\n\n"
+        "Select a fixed amount:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def check_settings_action(query):
+    trade_amount = await calculate_trade_amount()
+    trading_mode = f"{TRADE_PERCENTAGE}% of wallet" if USE_PERCENTAGE_TRADING else f"${TRADE_AMOUNT_USD} fixed"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Trade Settings", callback_data="trade_settings")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"🔍 **Check Current Loadout**\n\n"
+        f"**Trading Configuration:**\n"
+        f"• **Mode**: {trading_mode}\n"
+        f"• **Amount**: ${trade_amount:.2f}\n"
+        f"• **Stop Loss**: {STOP_LOSS_PCT}%\n"
+        f"• **Trailing Stop**: {TRAIL_FROM_PEAK_PCT}%\n"
+        f"• **Take Profit Ladder**: {TP_LADDER}\n"
+        f"• **Re-entry**: {'Enabled' if REENTRY_ENABLED else 'Disabled'}\n"
+        f"• **Max Re-entries**: {MAX_REENTRIES_PER_TOKEN}\n"
+        f"• **Re-entry Confirm**: +{REENTRY_CONFIRM_PCT}%\n\n"
+        f"**Current Status:**\n"
+        f"• Bot Mode: {'LIVE TRADING' if not DRY_RUN else 'DRY RUN'}\n"
+        f"• Channels: {len(CHANNELS)} monitored",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def awaken_beast_action(query):
+    global DRY_RUN
+    DRY_RUN = False
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Leviathan Mode", callback_data="leviathan_mode")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "🌊 **Beast Awakened!**\n\n"
+        "The Leviathan has risen from the depths!\n\n"
+        "✅ **Status**: LIVE TRADING ACTIVE\n"
+        "⚡ **Auto-trading**: ENABLED\n"
+        "🎯 **Target**: @gem_tools_calls\n"
+        "💰 **Strike Force**: 5% of wallet\n\n"
+        "The beast hunts...",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def sleep_beast_action(query):
+    global DRY_RUN
+    DRY_RUN = True
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Leviathan Mode", callback_data="leviathan_mode")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "😴 **Beast Sent to Depths**\n\n"
+        "The Leviathan has returned to slumber.\n\n"
+        "⏸️ **Status**: TRADING PAUSED\n"
+        "💤 **Auto-trading**: DISABLED\n"
+        "👁️ **Monitoring**: Still watching channels\n"
+        "🛡️ **Protection**: All positions safe\n\n"
+        "The beast sleeps...",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def beast_status_action(query):
+    status = "🌊 AWAKE" if not DRY_RUN else "😴 SLEEPING"
+    mode = "LIVE TRADING" if not DRY_RUN else "DRY RUN MODE"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Leviathan Mode", callback_data="leviathan_mode")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"📊 **Status of the Beast**\n\n"
+        f"**Current State**: {status}\n"
+        f"**Trading Mode**: {mode}\n"
+        f"**Auto-trading**: {'ACTIVE' if not DRY_RUN else 'PAUSED'}\n"
+        f"**Channels Monitored**: {len(CHANNELS)}\n"
+        f"**Last Activity**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"**Fleet Status:**\n"
+        f"• Wallets Connected: 1\n"
+        f"• Ready for Action: {'✅' if not DRY_RUN else '⏸️'}\n"
+        f"• Monitoring: @gem_tools_calls",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def add_channel_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Sniping Grounds", callback_data="sniping_grounds")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "📍 **Mark New Waters**\n\n"
+        "To add a new Telegram channel for monitoring:\n\n"
+        "1. Send the channel username as a message\n"
+        "2. Format: `@channel_username`\n"
+        "3. The channel will be added to monitoring\n\n"
+        "**Current Channels:**\n"
+        f"• {', '.join(CHANNELS)}\n\n"
+        "**Note**: Bot must be admin in the channel to monitor messages.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def view_channels_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Sniping Grounds", callback_data="sniping_grounds")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"👁️ **Survey the Waters**\n\n"
+        f"**Currently Monitoring:**\n"
+        f"• {', '.join(CHANNELS)}\n\n"
+        f"**Total Channels**: {len(CHANNELS)}\n"
+        f"**Status**: {'🟢 Active' if len(CHANNELS) > 0 else '🔴 No channels'}\n\n"
+        f"**Monitoring Features:**\n"
+        f"• Auto-detect launch signals\n"
+        f"• Instant trade execution\n"
+        f"• Real-time price tracking\n"
+        f"• Risk management active",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def remove_channel_action(query):
+    if len(CHANNELS) <= 1:
+        keyboard = [
+            [InlineKeyboardButton("🔙 Back to Sniping Grounds", callback_data="sniping_grounds")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "🗑️ **Abandon Waters**\n\n"
+            "⚠️ **Cannot remove all channels!**\n\n"
+            "You must have at least one channel for monitoring.\n"
+            "Add a new channel before removing this one.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        keyboard = []
+        for channel in CHANNELS:
+            keyboard.append([InlineKeyboardButton(f"🗑️ Remove {channel}", callback_data=f"remove_ch_{channel}")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Sniping Grounds", callback_data="sniping_grounds")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "🗑️ **Abandon Waters**\n\n"
+            "Select a channel to remove from monitoring:\n\n"
+            "**Current Channels:**\n" + "\n".join([f"• {ch}" for ch in CHANNELS]),
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+async def battle_history_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Navigation & Logs", callback_data="navigation_logs")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "📜 **Battle History**\n\n"
+        "**Recent Trades:**\n"
+        "• No trades executed yet\n\n"
+        "**Trading Statistics:**\n"
+        "• Total Trades: 0\n"
+        "• Successful Trades: 0\n"
+        "• Failed Trades: 0\n"
+        "• Win Rate: N/A\n\n"
+        "**Last 24 Hours:**\n"
+        "• Trades: 0\n"
+        "• Volume: $0.00\n"
+        "• PnL: $0.00",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def war_chest_action(query):
+    try:
+        balance_usd = await get_wallet_balance_usd()
+    except:
+        balance_usd = 0.0
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Navigation & Logs", callback_data="navigation_logs")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"💰 **War Chest**\n\n"
+        f"**Current Holdings:**\n"
+        f"• SOL Balance: ${balance_usd:.2f} USD\n"
+        f"• Available for Trading: ${balance_usd * 0.05:.2f} (5%)\n\n"
+        f"**Trading Performance:**\n"
+        f"• Total PnL: $0.00\n"
+        f"• Daily PnL: $0.00\n"
+        f"• Best Trade: N/A\n"
+        f"• Worst Trade: N/A\n\n"
+        f"**Risk Management:**\n"
+        f"• Stop Loss: {STOP_LOSS_PCT}%\n"
+        f"• Trailing Stop: {TRAIL_FROM_PEAK_PCT}%\n"
+        f"• Max Risk per Trade: 5%",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def notifications_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Navigation & Logs", callback_data="navigation_logs")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "🔔 **Signals & Whispers**\n\n"
+        "**Notification Settings:**\n"
+        "• Trade Executions: ✅ Enabled\n"
+        "• Price Alerts: ✅ Enabled\n"
+        "• Error Notifications: ✅ Enabled\n"
+        "• Channel Signals: ✅ Enabled\n\n"
+        "**Alert Types:**\n"
+        "• Buy/Sell Confirmations\n"
+        "• Stop Loss Triggers\n"
+        "• Take Profit Hits\n"
+        "• Re-entry Alerts\n"
+        "• System Errors\n\n"
+        "All notifications are sent to this chat.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def adjust_stops_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Leviathan Forge", callback_data="leviathan_forge")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"🛡️ **Adjust Trail & Stop**\n\n"
+        f"**Current Settings:**\n"
+        f"• Stop Loss: {STOP_LOSS_PCT}%\n"
+        f"• Trailing Stop: {TRAIL_FROM_PEAK_PCT}%\n\n"
+        f"**To modify these settings:**\n"
+        f"1. Edit the values in bot.py\n"
+        f"2. Restart the bot\n\n"
+        f"**Recommended Values:**\n"
+        f"• Stop Loss: 10-20%\n"
+        f"• Trailing Stop: 5-15%\n\n"
+        f"**Current Configuration:**\n"
+        f"• STOP_LOSS_PCT = {STOP_LOSS_PCT}\n"
+        f"• TRAIL_FROM_PEAK_PCT = {TRAIL_FROM_PEAK_PCT}",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def ladder_strategy_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Leviathan Forge", callback_data="leviathan_forge")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"📈 **Ladder Strategy**\n\n"
+        f"**Current Take Profit Ladder:**\n"
+        f"• {TP_LADDER}\n\n"
+        f"**How it works:**\n"
+        f"• Sells portions at different profit levels\n"
+        f"• Reduces risk while maximizing gains\n"
+        f"• Example: 25% at 2x, 25% at 4x, 50% at 10x\n\n"
+        f"**To modify:**\n"
+        f"1. Edit TP_LADDER in bot.py\n"
+        f"2. Restart the bot\n\n"
+        f"**Current Setting:**\n"
+        f"TP_LADDER = {TP_LADDER}",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def reentry_tide_action(query):
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Leviathan Forge", callback_data="leviathan_forge")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"♻️ **Re-Entry Tide**\n\n"
+        f"**Current Settings:**\n"
+        f"• Re-entry: {'Enabled' if REENTRY_ENABLED else 'Disabled'}\n"
+        f"• Max Re-entries: {MAX_REENTRIES_PER_TOKEN}\n"
+        f"• Confirm Threshold: +{REENTRY_CONFIRM_PCT}%\n\n"
+        f"**How it works:**\n"
+        f"• Re-enters trades on price confirmation\n"
+        f"• Limits maximum re-entries per token\n"
+        f"• Requires price increase to confirm\n\n"
+        f"**To modify:**\n"
+        f"1. Edit REENTRY_* variables in bot.py\n"
+        f"2. Restart the bot\n\n"
+        f"**Current Configuration:**\n"
+        f"• REENTRY_ENABLED = {REENTRY_ENABLED}\n"
+        f"• MAX_REENTRIES_PER_TOKEN = {MAX_REENTRIES_PER_TOKEN}\n"
+        f"• REENTRY_CONFIRM_PCT = {REENTRY_CONFIRM_PCT}",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+# Additional helper functions
+async def set_percentage_value(query, percentage):
+    global TRADE_PERCENTAGE, USE_PERCENTAGE_TRADING
+    TRADE_PERCENTAGE = percentage
+    USE_PERCENTAGE_TRADING = True
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Trade Settings", callback_data="trade_settings")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"✅ **Tribute % Updated!**\n\n"
+        f"**New Setting**: {percentage}% of wallet balance\n"
+        f"**Mode**: Dynamic trading enabled\n\n"
+        f"The Leviathan will now use {percentage}% of your wallet for each trade.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def set_fixed_value(query, amount):
+    global TRADE_AMOUNT_USD, USE_PERCENTAGE_TRADING
+    TRADE_AMOUNT_USD = amount
+    USE_PERCENTAGE_TRADING = False
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Trade Settings", callback_data="trade_settings")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"✅ **Fixed Strike Updated!**\n\n"
+        f"**New Setting**: ${amount} per trade\n"
+        f"**Mode**: Fixed amount trading\n\n"
+        f"The Leviathan will now use exactly ${amount} for each trade.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def remove_specific_channel(query, channel):
+    global CHANNELS
+    if channel in CHANNELS and len(CHANNELS) > 1:
+        CHANNELS.remove(channel)
+        
+        keyboard = [
+            [InlineKeyboardButton("🔙 Back to Sniping Grounds", callback_data="sniping_grounds")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"✅ **Channel Removed!**\n\n"
+            f"**Removed**: {channel}\n"
+            f"**Remaining Channels**: {', '.join(CHANNELS)}\n\n"
+            f"The Leviathan will no longer monitor this channel.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    else:
+        await query.answer("Cannot remove the last channel!")
 
 async def main():
     # Initialize Solana connection
@@ -649,6 +1535,7 @@ async def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("buy", cmd_buy))
     app.add_handler(CommandHandler("emergency_sell", cmd_emergency_sell))
+    app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_channel_message))
 
     try:
