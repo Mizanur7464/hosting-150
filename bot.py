@@ -12,7 +12,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 print("🔍 Loading configuration...")
 
 # Telegram Bot Configuration
-BOT_TOKEN = "8147677560:AAHsJ9h1dRkGG9UJvs_2YBGkqRtBB0ZMgUs"
+BOT_TOKEN = "7360756398:AAGgUU0CqFRiYRpEXp5WVoGNqgCWe2nKrkM"
 TELEGRAM_CHANNELS = ["@gem_tools_calls"]  # Only monitor gem_tools_calls
 
 # Solana RPC Configuration
