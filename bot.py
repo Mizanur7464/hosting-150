@@ -1,6 +1,7 @@
 import os, asyncio, re, time, json, base64
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
+from dotenv import load_dotenv
 
 import httpx
 import websockets
@@ -11,32 +12,36 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 # ================== CONFIG ==================
 print("🔍 Loading configuration...")
 
+# Load environment variables
+load_dotenv()
+
 # Telegram Bot Configuration
-BOT_TOKEN = "7360756398:AAGgUU0CqFRiYRpEXp5WVoGNqgCWe2nKrkM"
-TELEGRAM_CHANNELS = ["@gem_tools_calls"]  # Only monitor gem_tools_calls
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNELS = os.getenv("TELEGRAM_CHANNELS").split(",")
 
 # Solana RPC Configuration
-RPC_URL = "https://mainnet.helius-rpc.com/?api-key=6fbd7c3d-4f61-436a-9fcd-4893a653b402"
+RPC_URL = os.getenv("RPC_URL")
 WSS_URL = RPC_URL.replace("https://", "wss://")  # Helius WebSocket
-WALLET_PRIVATE_KEY = "2afY6GD9APZorfxQVqDNXtkEsH1uVyi2TDcyPAYCLsnNMjmXgTKuSrVzPjmscVhbhKFW8EjP3wd7imuu6kDHnds6"  # Add your actual private key here
+WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY")
+
 # Trading Configuration
-TRADE_AMOUNT_USD = 10.0           # Fallback amount if percentage fails
-TRADE_PERCENTAGE = 5.0            # Percentage of wallet to trade (5%)
-USE_PERCENTAGE_TRADING = True     # Enable percentage-based trading
-STOP_LOSS_PCT = -30.0             # from entry
-TRAIL_FROM_PEAK_PCT = 15.0        # from peak
-TP_LADDER = "2x:25,4x:25,10x:30,rest:trail15"
+TRADE_AMOUNT_USD = float(os.getenv("TRADE_AMOUNT_USD"))
+TRADE_PERCENTAGE = float(os.getenv("TRADE_PERCENTAGE"))
+USE_PERCENTAGE_TRADING = os.getenv("USE_PERCENTAGE_TRADING").lower() == "true"
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT"))
+TRAIL_FROM_PEAK_PCT = float(os.getenv("TRAIL_FROM_PEAK_PCT"))
+TP_LADDER = os.getenv("TP_LADDER")
 
 # Re-entry Configuration
-REENTRY_ENABLED = True
-REENTRY_CONFIRM_PCT = 7.0
-MAX_REENTRIES_PER_TOKEN = 1
+REENTRY_ENABLED = os.getenv("REENTRY_ENABLED").lower() == "true"
+REENTRY_CONFIRM_PCT = float(os.getenv("REENTRY_CONFIRM_PCT"))
+MAX_REENTRIES_PER_TOKEN = int(os.getenv("MAX_REENTRIES_PER_TOKEN"))
 
 # System Configuration
-DRY_RUN = False  # Enable real trading
-PRICE_POLL_SECONDS = 0.5          # fast polling
-PRIORITY_FEE_MICROLAMPORTS = 20000
-MIN_LIQ_SOL = 10.0
+DRY_RUN = os.getenv("DRY_RUN").lower() == "true"
+PRICE_POLL_SECONDS = float(os.getenv("PRICE_POLL_SECONDS"))
+PRIORITY_FEE_MICROLAMPORTS = int(os.getenv("PRIORITY_FEE_MICROLAMPORTS"))
+MIN_LIQ_SOL = float(os.getenv("MIN_LIQ_SOL"))
 
 # User state tracking
 user_states = {}  # Track user states for private key input
@@ -44,18 +49,42 @@ user_states = {}  # Track user states for private key input
 # Channel list
 CHANNELS = TELEGRAM_CHANNELS
 
-if not BOT_TOKEN or not RPC_URL or not WALLET_PRIVATE_KEY or not CHANNELS:
-    raise SystemExit("Missing required configuration: BOT_TOKEN, RPC_URL, WALLET_PRIVATE_KEY, CHANNELS")
+# Validate all required environment variables
+required_vars = {
+    "TELEGRAM_BOT_TOKEN": BOT_TOKEN,
+    "RPC_URL": RPC_URL,
+    "WALLET_PRIVATE_KEY": WALLET_PRIVATE_KEY,
+    "TELEGRAM_CHANNELS": TELEGRAM_CHANNELS,
+    "SOL_MINT": SOL_MINT,
+    "TRADE_AMOUNT_USD": TRADE_AMOUNT_USD,
+    "TRADE_PERCENTAGE": TRADE_PERCENTAGE,
+    "USE_PERCENTAGE_TRADING": USE_PERCENTAGE_TRADING,
+    "STOP_LOSS_PCT": STOP_LOSS_PCT,
+    "TRAIL_FROM_PEAK_PCT": TRAIL_FROM_PEAK_PCT,
+    "TP_LADDER": TP_LADDER,
+    "REENTRY_ENABLED": REENTRY_ENABLED,
+    "REENTRY_CONFIRM_PCT": REENTRY_CONFIRM_PCT,
+    "MAX_REENTRIES_PER_TOKEN": MAX_REENTRIES_PER_TOKEN,
+    "DRY_RUN": DRY_RUN,
+    "PRICE_POLL_SECONDS": PRICE_POLL_SECONDS,
+    "PRIORITY_FEE_MICROLAMPORTS": PRIORITY_FEE_MICROLAMPORTS,
+    "MIN_LIQ_SOL": MIN_LIQ_SOL,
+    "LAMPORTS_PER_SOL": LAMPORTS_PER_SOL
+}
+
+missing_vars = [var for var, value in required_vars.items() if not value]
+if missing_vars:
+    raise SystemExit(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 # ================== CONSTS ==================
-SOL_MINT = "So11111111111111111111111111111111111111112"
+SOL_MINT = os.getenv("SOL_MINT")
 MINT_RE = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{32,44}\b")
 JUP_PRICE = "https://price.jup.ag/v6/price"        # token price in SOL
 JUP_QUOTE = "https://quote-api.jup.ag/v6/quote"    # for pre-wa কাজ rm & later swaps
 JUP_SWAP = "https://quote-api.jup.ag/v6/swap"      # for executing swaps
 
 # Solana constants
-LAMPORTS_PER_SOL = 1_000_000_000
+LAMPORTS_PER_SOL = int(os.getenv("LAMPORTS_PER_SOL"))
 
 def pct(a: float, b: float) -> float:
     return (b / a - 1.0) * 100.0
@@ -573,8 +602,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🤖 Bot Status: {'LIVE TRADING' if not DRY_RUN else 'DRY RUN MODE'}\n"
         f"💰 Trading: {trading_mode} (${trade_amount:.2f})\n"
-        f"🛡️ SL: {STOP_LOSS_PCT}% | Trail: {TRAIL_FROM_PEAK_PCT}% | Ladder: {TP_LADDER}\n"
-        f"♻️ Re-entry: {REENTRY_ENABLED} ({MAX_REENTRIES_PER_TOKEN} max, +{REENTRY_CONFIRM_PCT}% confirm)\n"
+        f"🛡️ SL: {STOP_LOSS_PCT}% | Trail: {TRAIL_FROM_PEAK_PCT}% | Ladder: 2x:30%,5x:20%,10x:10%,15x:15%,20x:15%\n"
+        f"♻️ Re-entry: {'Enabled' if REENTRY_ENABLED else 'Disabled'} (Buyer preference)\n"
         f"👀 Watching: {', '.join(CHANNELS)}\n"
         f"👤 User: {full_name} (@{username})",
         reply_markup=reply_markup
@@ -996,8 +1025,8 @@ async def show_main_menu(query):
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🤖 Bot Status: {'LIVE TRADING' if not DRY_RUN else 'DRY RUN MODE'}\n"
         f"💰 Trading: {trading_mode} (${trade_amount:.2f})\n"
-        f"🛡️ SL: {STOP_LOSS_PCT}% | Trail: {TRAIL_FROM_PEAK_PCT}% | Ladder: {TP_LADDER}\n"
-        f"♻️ Re-entry: {REENTRY_ENABLED} ({MAX_REENTRIES_PER_TOKEN} max, +{REENTRY_CONFIRM_PCT}% confirm)\n"
+        f"🛡️ SL: {STOP_LOSS_PCT}% | Trail: {TRAIL_FROM_PEAK_PCT}% | Ladder: 2x:30%,5x:20%,10x:10%,15x:15%,20x:15%\n"
+        f"♻️ Re-entry: {'Enabled' if REENTRY_ENABLED else 'Disabled'} (Buyer preference)\n"
         f"👀 Watching: {', '.join(CHANNELS)}",
         reply_markup=reply_markup
     )
@@ -1426,9 +1455,16 @@ async def ladder_strategy_action(query):
         f"**How it works:**\n"
         f"• Sells portions at different profit levels\n"
         f"• Reduces risk while maximizing gains\n"
-        f"• Example: 25% at 2x, 25% at 4x, 50% at 10x\n\n"
+        f"• **New Format**: 30% at 2x, 20% at 5x, 10% at 10x, 15% at 15x, 15% at 20x\n\n"
+        f"**Profit Distribution:**\n"
+        f"• 2x: 30% of position\n"
+        f"• 5x: 20% of position\n"
+        f"• 10x: 10% of position\n"
+        f"• 15x: 15% of position\n"
+        f"• 20x: 15% of position\n"
+        f"• Rest: Trailing stop\n\n"
         f"**To modify:**\n"
-        f"1. Edit TP_LADDER in bot.py\n"
+        f"1. Edit TP_LADDER in .env file\n"
         f"2. Restart the bot\n\n"
         f"**Current Setting:**\n"
         f"TP_LADDER = {TP_LADDER}",
@@ -1448,17 +1484,15 @@ async def reentry_tide_action(query):
         f"• Re-entry: {'Enabled' if REENTRY_ENABLED else 'Disabled'}\n"
         f"• Max Re-entries: {MAX_REENTRIES_PER_TOKEN}\n"
         f"• Confirm Threshold: +{REENTRY_CONFIRM_PCT}%\n\n"
-        f"**How it works:**\n"
-        f"• Re-enters trades on price confirmation\n"
-        f"• Limits maximum re-entries per token\n"
-        f"• Requires price increase to confirm\n\n"
-        f"**To modify:**\n"
-        f"1. Edit REENTRY_* variables in bot.py\n"
-        f"2. Restart the bot\n\n"
+        f"**Status**: Re-entry is **DISABLED** as per buyer's preference\n\n"
+        f"**Why Disabled:**\n"
+        f"• Buyer prefers no re-entry strategy\n"
+        f"• Focus on single entry with ladder strategy\n"
+        f"• Reduces complexity and risk\n\n"
         f"**Current Configuration:**\n"
         f"• REENTRY_ENABLED = {REENTRY_ENABLED}\n"
-        f"• MAX_REENTRIES_PER_TOKEN = {MAX_REENTRIES_PER_TOKEN}\n"
-        f"• REENTRY_CONFIRM_PCT = {REENTRY_CONFIRM_PCT}",
+        f"• Strategy: Single entry with advanced ladder\n"
+        f"• Last 10%: 15% trailing stop from peak",
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )

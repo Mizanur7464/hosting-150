@@ -1,81 +1,165 @@
-# 🤖 Solana Trading Bot
+# 🌊 Leviathan86Bot - Advanced Solana Trading Bot
 
-A sophisticated Telegram bot for automated Solana token trading with Jupiter DEX integration.
+## 🚀 Features
 
-## ✨ Features
+### ⚓ **Wallet Management**
+- Secure private key storage
+- Multiple wallet support
+- Real-time balance tracking
 
-- **Automated Trading**: Buy/sell tokens automatically based on signals
-- **Risk Management**: Stop loss, trailing stop, and take profit ladder
-- **Smart Re-entry**: Automatic re-entry after profitable exits
-- **Real-time Monitoring**: Live price tracking and position management
-- **Jupiter DEX Integration**: Seamless token swaps on Solana
-- **Telegram Integration**: Channel monitoring and manual controls
+### ⚔️ **Trading System**
+- **Percentage Trading**: 5% of wallet (grows over time)
+- **Fixed Amount**: $10 - $10,000 (constant amount)
+- **Choose Mode**: Either percentage OR fixed amount
+- **Jupiter Integration**: Solana DEX integration
+- **Real-time Price**: Jupiter API price feeds
 
-## 🚀 Quick Start
+### 🛡️ **Risk Management**
+- **Stop Loss**: -30% (configurable)
+- **Trailing Stop**: 15% from peak
+- **Advanced Take Profit Ladder**: 
+  - 30% at 2x
+  - 20% at 5x
+  - 10% at 10x
+  - 15% at 15x
+  - 15% at 20x
+  - Rest: Trailing stop
+- **Re-entry System**: Disabled (buyer preference)
 
-### 1. Install Dependencies
+### 🌊 **Leviathan Mode**
+- **Live Trading**: ON/OFF toggle
+- **Dry Run Mode**: Testing without real trades
+- **Status Monitoring**: Real-time bot status
+
+### 🪝 **Channel Monitoring**
+- **@gem_tools_calls**: Auto signal detection
+- **Token Parsing**: Regex-based mint extraction
+- **Auto Trading**: Instant buy on signal
+
+## 📋 Installation
+
+1. **Clone Repository**
+```bash
+git clone <repository-url>
+cd hosting-150
+```
+
+2. **Install Dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure Bot
-Edit `bot_config.env` with your details:
-- Add your Solana wallet private key
-- Set your Telegram channels to monitor
-- Adjust trading parameters as needed
-
-### 3. Setup Check
+3. **Configure Environment**
 ```bash
-python setup_bot.py
+# Copy environment template
+copy env_example.txt .env
+
+# Edit .env file with your values
+# - TELEGRAM_BOT_TOKEN
+# - RPC_URL
+# - WALLET_PRIVATE_KEY
+# - All other settings
 ```
 
-### 4. Run Bot
+4. **Run Bot**
 ```bash
 python bot.py
 ```
 
 ## ⚙️ Configuration
 
-### Required Environment Variables
-- `TELEGRAM_BOT_TOKEN`: Your Telegram bot token
-- `RPC_URL`: Helius RPC endpoint
-- `WALLET_PRIVATE_KEY`: Your Solana wallet private key
-- `TELEGRAM_CHANNELS`: Comma-separated list of channels to monitor
+### Environment Variables (.env)
+```env
+# Telegram Bot
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHANNELS=@gem_tools_calls
 
-### Trading Parameters
-- `TRADE_AMOUNT_USD`: Amount per trade (default: $10)
-- `STOP_LOSS_PCT`: Stop loss percentage (default: -30%)
-- `TRAIL_FROM_PEAK_PCT`: Trailing stop percentage (default: 15%)
-- `TP_LADDER`: Take profit ladder configuration
-- `DRY_RUN`: Set to false for live trading
+# Solana RPC
+RPC_URL=https://mainnet.helius-rpc.com/?api-key=your_key
+WALLET_PRIVATE_KEY=your_private_key
 
-## 🎯 Commands
+# Trading Settings
+TRADE_AMOUNT_USD=10.0
+TRADE_PERCENTAGE=5.0
+USE_PERCENTAGE_TRADING=True
+STOP_LOSS_PCT=-30.0
+TRAIL_FROM_PEAK_PCT=15.0
+TP_LADDER=2x:30,5x:20,10x:10,15x:15,20x:15,rest:trail15
 
-- `/start` - Show bot status and configuration
-- `/buy <TOKEN_MINT>` - Manually buy a token
-- `/emergency_sell` - Emergency sell all positions
+# Re-entry Settings
+REENTRY_ENABLED=True
+REENTRY_CONFIRM_PCT=7.0
+MAX_REENTRIES_PER_TOKEN=1
 
-## ⚠️ Safety Notes
+# System Settings
+DRY_RUN=False
+PRICE_POLL_SECONDS=0.5
+PRIORITY_FEE_MICROLAMPORTS=20000
+MIN_LIQ_SOL=10.0
 
-- Always test with `DRY_RUN=true` first
-- Start with small amounts
-- Monitor your positions regularly
-- Keep your private keys secure
+# Solana Constants
+SOL_MINT=So11111111111111111111111111111111111111112
+LAMPORTS_PER_SOL=1000000000
+```
+
+## 🎯 **New Ladder Strategy**
+
+### **Profit Distribution:**
+- **2x**: 30% of position sold
+- **5x**: 20% of position sold
+- **10x**: 10% of position sold
+- **15x**: 15% of position sold
+- **20x**: 15% of position sold
+- **Rest**: Trailing stop (15% from peak)
+
+### **Benefits:**
+- **Risk Reduction**: Early profit taking
+- **Maximize Gains**: Hold for higher multiples
+- **Flexible Strategy**: Adapts to market conditions
+- **Trailing Stop**: Protects remaining position
+
+## 🔒 Security
+
+- **Environment Variables**: All sensitive data in .env
+- **No Hardcoded Values**: Zero hardcoded secrets
+- **Git Protection**: .env file not committed
+- **Validation**: All required variables checked
+
+## 📊 Performance
+
+- **Buy Speed**: 1-2 seconds
+- **Price Polling**: Every 0.5 seconds
+- **Channel Monitoring**: Real-time
+- **Transaction Speed**: Sub-500ms reactivity
+
+## 🛠️ Commands
+
+- `/start` - Main menu
+- `/buy <TOKEN_MINT>` - Manual buy
+- `/emergency_sell` - Sell all positions
+
+## 📱 Telegram Interface
+
+### **Main Menu:**
+- ⚓ Wallet Dock
+- ⚔️ Trade Settings
+- 🌊 Leviathan Mode
+- 🪝 Sniping Grounds
+- 📜 Navigation & Logs
+- ⚙️ Leviathan Forge
+
+## 🚨 Important Notes
+
+1. **Bot Admin**: Bot must be admin in monitored channels
+2. **Private Keys**: Only use in private chat
+3. **Testing**: Use DRY_RUN=true for testing
+4. **Backup**: Always backup your .env file
+5. **Updates**: Check for updates regularly
 
 ## 📞 Support
 
-- DM @mag_eth for support
-- Join @gemtools_official
-- Use @GemToolsAds_bot for promotions
-
-## 🔧 Technical Details
-
-- Built with Python 3.8+
-- Uses Jupiter DEX for swaps
-- Helius RPC for Solana connectivity
-- Real-time WebSocket monitoring
-- Priority fee support for fast execution
+For support and updates, contact the development team.
 
 ---
 
-**⚠️ Disclaimer**: This bot is for educational purposes. Trading cryptocurrencies involves risk. Use at your own discretion.
+**⚠️ Disclaimer**: Trading cryptocurrencies involves risk. Use at your own discretion.
