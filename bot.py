@@ -17,7 +17,7 @@ load_dotenv()
 
 # Telegram Bot Configuration
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHANNELS = os.getenv("TELEGRAM_CHANNELS").split(",")
+TELEGRAM_CHANNELS = [ch.strip() for ch in os.getenv("TELEGRAM_CHANNELS").split(",")]
 
 # Solana RPC Configuration
 RPC_URL = os.getenv("RPC_URL")
@@ -25,56 +25,29 @@ WSS_URL = RPC_URL.replace("https://", "wss://")  # Helius WebSocket
 WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY")
 
 # Trading Configuration
-TRADE_AMOUNT_USD = float(os.getenv("TRADE_AMOUNT_USD"))
-TRADE_PERCENTAGE = float(os.getenv("TRADE_PERCENTAGE"))
-USE_PERCENTAGE_TRADING = os.getenv("USE_PERCENTAGE_TRADING").lower() == "true"
-STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT"))
-TRAIL_FROM_PEAK_PCT = float(os.getenv("TRAIL_FROM_PEAK_PCT"))
-TP_LADDER = os.getenv("TP_LADDER")
+TRADE_AMOUNT_USD = float(os.getenv("TRADE_AMOUNT_USD", "10.0"))
+TRADE_PERCENTAGE = float(os.getenv("TRADE_PERCENTAGE", "5.0"))
+USE_PERCENTAGE_TRADING = os.getenv("USE_PERCENTAGE_TRADING", "True").lower() == "true"
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "-30.0"))
+TRAIL_FROM_PEAK_PCT = float(os.getenv("TRAIL_FROM_PEAK_PCT", "15.0"))
+TP_LADDER = os.getenv("TP_LADDER", "2x:30,5x:20,10x:10,15x:15,20x:15,rest:trail15")
 
 # Re-entry Configuration
-REENTRY_ENABLED = os.getenv("REENTRY_ENABLED").lower() == "true"
-REENTRY_CONFIRM_PCT = float(os.getenv("REENTRY_CONFIRM_PCT"))
-MAX_REENTRIES_PER_TOKEN = int(os.getenv("MAX_REENTRIES_PER_TOKEN"))
+REENTRY_ENABLED = os.getenv("REENTRY_ENABLED", "False").lower() == "true"
+REENTRY_CONFIRM_PCT = float(os.getenv("REENTRY_CONFIRM_PCT", "7.0"))
+MAX_REENTRIES_PER_TOKEN = int(os.getenv("MAX_REENTRIES_PER_TOKEN", "1"))
 
 # System Configuration
-DRY_RUN = os.getenv("DRY_RUN").lower() == "true"
-PRICE_POLL_SECONDS = float(os.getenv("PRICE_POLL_SECONDS"))
-PRIORITY_FEE_MICROLAMPORTS = int(os.getenv("PRIORITY_FEE_MICROLAMPORTS"))
-MIN_LIQ_SOL = float(os.getenv("MIN_LIQ_SOL"))
+DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"  # Default to DRY_RUN for safety
+PRICE_POLL_SECONDS = float(os.getenv("PRICE_POLL_SECONDS", "0.5"))
+PRIORITY_FEE_MICROLAMPORTS = int(os.getenv("PRIORITY_FEE_MICROLAMPORTS", "20000"))
+MIN_LIQ_SOL = float(os.getenv("MIN_LIQ_SOL", "10.0"))
 
 # User state tracking
 user_states = {}  # Track user states for private key input
 
 # Channel list
 CHANNELS = TELEGRAM_CHANNELS
-
-# Validate all required environment variables
-required_vars = {
-    "TELEGRAM_BOT_TOKEN": BOT_TOKEN,
-    "RPC_URL": RPC_URL,
-    "WALLET_PRIVATE_KEY": WALLET_PRIVATE_KEY,
-    "TELEGRAM_CHANNELS": TELEGRAM_CHANNELS,
-    "SOL_MINT": SOL_MINT,
-    "TRADE_AMOUNT_USD": TRADE_AMOUNT_USD,
-    "TRADE_PERCENTAGE": TRADE_PERCENTAGE,
-    "USE_PERCENTAGE_TRADING": USE_PERCENTAGE_TRADING,
-    "STOP_LOSS_PCT": STOP_LOSS_PCT,
-    "TRAIL_FROM_PEAK_PCT": TRAIL_FROM_PEAK_PCT,
-    "TP_LADDER": TP_LADDER,
-    "REENTRY_ENABLED": REENTRY_ENABLED,
-    "REENTRY_CONFIRM_PCT": REENTRY_CONFIRM_PCT,
-    "MAX_REENTRIES_PER_TOKEN": MAX_REENTRIES_PER_TOKEN,
-    "DRY_RUN": DRY_RUN,
-    "PRICE_POLL_SECONDS": PRICE_POLL_SECONDS,
-    "PRIORITY_FEE_MICROLAMPORTS": PRIORITY_FEE_MICROLAMPORTS,
-    "MIN_LIQ_SOL": MIN_LIQ_SOL,
-    "LAMPORTS_PER_SOL": LAMPORTS_PER_SOL
-}
-
-missing_vars = [var for var, value in required_vars.items() if not value]
-if missing_vars:
-    raise SystemExit(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 # ================== CONSTS ==================
 SOL_MINT = os.getenv("SOL_MINT")
@@ -84,7 +57,11 @@ JUP_QUOTE = "https://quote-api.jup.ag/v6/quote"    # for pre-wa কাজ rm & l
 JUP_SWAP = "https://quote-api.jup.ag/v6/swap"      # for executing swaps
 
 # Solana constants
-LAMPORTS_PER_SOL = int(os.getenv("LAMPORTS_PER_SOL"))
+LAMPORTS_PER_SOL = int(os.getenv("LAMPORTS_PER_SOL", "1000000000"))
+
+# Validate only critical environment variables
+if not BOT_TOKEN or not RPC_URL or not WALLET_PRIVATE_KEY or not CHANNELS or not SOL_MINT:
+    raise SystemExit("Missing required configuration: BOT_TOKEN, RPC_URL, WALLET_PRIVATE_KEY, CHANNELS, SOL_MINT")
 
 def pct(a: float, b: float) -> float:
     return (b / a - 1.0) * 100.0
@@ -296,9 +273,13 @@ async def calculate_trade_amount() -> float:
 
 def parse_private_key(private_key_str: str) -> bytes:
     """Parse private key from string"""
+    if not private_key_str:
+        print("❌ Private key parsing error: empty private key")
+        return None
+        
     try:
-        # Try base58 decoding first
-        if len(private_key_str) == 88:
+        # Try base58 decoding first (88 or 87 characters)
+        if len(private_key_str) in [87, 88]:
             return base58.b58decode(private_key_str)
         # Try as JSON array
         elif private_key_str.startswith('['):
@@ -617,7 +598,7 @@ async def cmd_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = user.username or "No Username"
     first_name = user.first_name or "No First Name"
     
-    if len(context.args) != 1:
+    if not context.args or len(context.args) != 1:
         await update.message.reply_text("Usage: /buy <TOKEN_MINT>")
         return
     mint = context.args[0].strip()
@@ -665,8 +646,7 @@ async def cmd_emergency_sell(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("All positions exited.")
 
 def parse_signal(text: str) -> List[str]:
-    if not any(k in text.lower() for k in ("launch", "gem", "mint", "token")):
-        return []
+    # Look for contract addresses in any message (removed keyword restriction)
     return list(set(MINT_RE.findall(text)))
 
 async def handle_channel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -678,7 +658,7 @@ async def handle_channel_message(update: Update, context: ContextTypes.DEFAULT_T
     print(f"\n📨 Message Received:")
     print(f"   💬 Chat Type: {chat.type}")
     print(f"   👤 Username: {chat.username}")
-    print(f"   📝 Text: {msg.text[:50]}...")
+    print(f"   📝 Text: {msg.text[:200]}...")
     print(f"   👤 User ID: {update.effective_user.id}")
     
     # Check if this is a channel message
@@ -686,7 +666,7 @@ async def handle_channel_message(update: Update, context: ContextTypes.DEFAULT_T
         # Print channel message info
         print(f"\n📢 Channel Message:")
         print(f"   📺 Channel: @{chat.username}")
-        print(f"   💬 Message: {msg.text[:100]}...")
+        print(f"   💬 Message: {msg.text[:200]}...")
         print(f"   ⏰ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         print("=" * 50)
         
@@ -694,6 +674,26 @@ async def handle_channel_message(update: Update, context: ContextTypes.DEFAULT_T
             # fast-path: same as /buy
             fake_update = update
             await cmd_buy(fake_update, context)
+    elif chat.type == "supergroup":
+        # Handle supergroup - check if it's our monitored group
+        print(f"\n📢 Supergroup Message:")
+        print(f"   📺 Chat ID: {chat.id}")
+        print(f"   💬 Message: {msg.text[:200]}...")
+        print(f"   ⏰ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("=" * 50)
+        
+        # Process all supergroup messages for now (you can add specific chat ID filtering later)
+        signals = parse_signal(msg.text)
+        if signals:
+            print(f"   🎯 Found {len(signals)} mint address(es): {signals}")
+            for m in signals:
+                print(f"   🚀 Auto-buying: {m}")
+                # Create fake context with mint address
+                fake_context = context
+                fake_context.args = [m]
+                await cmd_buy(update, fake_context)
+        else:
+            print(f"   ❌ No mint addresses found in message")
     
     # Check if this is a private message from user waiting for private key
     elif chat.type == "private":  # Private chat
@@ -1079,7 +1079,8 @@ async def view_fleet_action(query):
     # Get wallet balance
     try:
         balance_usd = await get_wallet_balance_usd()
-        wallet_pubkey = base58.b58encode(parse_private_key(WALLET_PRIVATE_KEY)).decode()
+        private_key = parse_private_key(WALLET_PRIVATE_KEY)
+        wallet_pubkey = base58.b58encode(private_key).decode() if private_key else "Unknown"
     except:
         balance_usd = 0.0
         wallet_pubkey = "Unknown"
@@ -1109,7 +1110,7 @@ async def remove_wallet_action(query):
         "🗑️ **Remove Vessel**\n\n"
         "⚠️ **Warning**: This will disconnect the wallet from the Leviathan fleet.\n\n"
         "**Current Wallet:**\n"
-        f"• Address: `{base58.b58encode(parse_private_key(WALLET_PRIVATE_KEY)).decode()[:8]}...`\n"
+        f"• Address: `{base58.b58encode(parse_private_key(WALLET_PRIVATE_KEY)).decode()[:8] if parse_private_key(WALLET_PRIVATE_KEY) else 'Unknown'}...`\n"
         f"• Status: Connected\n\n"
         "Are you sure you want to remove this vessel?",
         reply_markup=reply_markup,
