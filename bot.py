@@ -125,18 +125,88 @@ async def helius_heartbeat():
             await asyncio.sleep(1.0)  # reconnect
 
 # ================== PRICE FEED ==================
+# Rate limiter for API calls
+class RateLimiter:
+    def __init__(self, max_requests: int = 10, time_window: int = 60):
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self.requests = []
+    
+    async def wait_if_needed(self):
+        now = time.time()
+        # Remove old requests
+        self.requests = [req_time for req_time in self.requests 
+                        if now - req_time < self.time_window]
+        
+        if len(self.requests) >= self.max_requests:
+            sleep_time = self.time_window - (now - self.requests[0])
+            if sleep_time > 0:
+                print(f"⏳ Rate limit reached, waiting {sleep_time:.1f}s...")
+                await asyncio.sleep(sleep_time)
+        
+        self.requests.append(now)
+
+# Global rate limiter
+rate_limiter = RateLimiter(max_requests=8, time_window=60)
+
 async def get_price_vs_sol(mint: str) -> Optional[float]:
+    """Get token price vs SOL with retry mechanism and rate limiting"""
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            # Apply rate limiting
+            await rate_limiter.wait_if_needed()
+            
+            # Add delay between requests
+            if attempt > 0:
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(JUP_PRICE, params={"ids": mint, "vsToken": SOL_MINT})
+                
+                if r.status_code == 200:
+                    data = r.json().get("data", {}).get(mint)
+                    if data and "price" in data:
+                        price = float(data["price"])
+                        print(f"✅ Price fetched: {mint} = {price:.10f} SOL (attempt {attempt + 1})")
+                        return price
+                    else:
+                        print(f"⚠️ No price data for {mint} (attempt {attempt + 1})")
+                elif r.status_code == 429:
+                    print(f"⚠️ Rate limited, retrying in {2 ** attempt}s...")
+                    continue
+                else:
+                    print(f"⚠️ HTTP {r.status_code} for {mint} (attempt {attempt + 1})")
+                    
+        except asyncio.TimeoutError:
+            print(f"⏰ Timeout fetching price for {mint} (attempt {attempt + 1})")
+        except Exception as e:
+            print(f"❌ Error fetching price for {mint}: {e} (attempt {attempt + 1})")
+    
+    print(f"❌ Failed to fetch price for {mint} after {max_retries} attempts")
+    
+    # Try fallback price source (CoinGecko)
     try:
-        async with httpx.AsyncClient(timeout=1.4) as client:
-            r = await client.get(JUP_PRICE, params={"ids": mint, "vsToken": SOL_MINT})
-            if r.status_code != 200:
-                return None
-            data = r.json().get("data", {}).get(mint)
-            if not data or "price" not in data:
-                return None
-            return float(data["price"])
-    except Exception:
-        return None
+        print(f"🔄 Trying fallback price source for {mint}...")
+        await rate_limiter.wait_if_needed()
+        
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Try to get token info from CoinGecko
+            response = await client.get(f"https://api.coingecko.com/api/v3/coins/solana/contract/{mint}")
+            if response.status_code == 200:
+                data = response.json()
+                if "market_data" in data and "current_price" in data["market_data"]:
+                    sol_price = await get_sol_price_usd()
+                    if sol_price:
+                        token_price_usd = data["market_data"]["current_price"]["usd"]
+                        token_price_sol = token_price_usd / sol_price
+                        print(f"✅ Fallback price fetched: {mint} = {token_price_sol:.10f} SOL")
+                        return token_price_sol
+    except Exception as e:
+        print(f"❌ Fallback price source also failed: {e}")
+    
+    return None
 
 # Optional: pre-warm route for lower latency on buy
 async def prewarm_quote(mint: str):
@@ -153,45 +223,89 @@ async def prewarm_quote(mint: str):
 
 # ================== JUPITER API FUNCTIONS ==================
 async def get_jupiter_quote(input_mint: str, output_mint: str, amount: int, slippage_bps: int = 300) -> Optional[dict]:
-    """Get quote from Jupiter API"""
-    try:
-        params = {
-            "inputMint": input_mint,
-            "outputMint": output_mint,
-            "amount": str(amount),
-            "slippageBps": slippage_bps,
-            "onlyDirectRoutes": False,
-            "asLegacyTransaction": False
-        }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(JUP_QUOTE, params=params)
-            if response.status_code == 200:
-                return response.json()
-            return None
-    except Exception as e:
-        print(f"Jupiter quote error: {e}")
-        return None
+    """Get quote from Jupiter API with retry mechanism"""
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            # Apply rate limiting
+            await rate_limiter.wait_if_needed()
+            
+            # Add delay between requests
+            if attempt > 0:
+                await asyncio.sleep(1 + attempt)  # Progressive delay
+            
+            params = {
+                "inputMint": input_mint,
+                "outputMint": output_mint,
+                "amount": str(amount),
+                "slippageBps": slippage_bps,
+                "onlyDirectRoutes": False,
+                "asLegacyTransaction": False
+            }
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(JUP_QUOTE, params=params)
+                
+                if response.status_code == 200:
+                    print(f"✅ Jupiter quote successful (attempt {attempt + 1})")
+                    return response.json()
+                elif response.status_code == 429:
+                    print(f"⚠️ Jupiter rate limited, retrying in {1 + attempt}s...")
+                    continue
+                else:
+                    print(f"⚠️ Jupiter HTTP {response.status_code} (attempt {attempt + 1})")
+                    
+        except asyncio.TimeoutError:
+            print(f"⏰ Jupiter quote timeout (attempt {attempt + 1})")
+        except Exception as e:
+            print(f"❌ Jupiter quote error: {e} (attempt {attempt + 1})")
+    
+    print(f"❌ Failed to get Jupiter quote after {max_retries} attempts")
+    return None
 
 async def get_jupiter_swap_transaction(quote: dict, user_public_key: str) -> Optional[dict]:
-    """Get swap transaction from Jupiter API"""
-    try:
-        payload = {
-            "quoteResponse": quote,
-            "userPublicKey": user_public_key,
-            "wrapAndUnwrapSol": True,
-            "useSharedAccounts": True,
-            "feeAccount": None,
-            "trackingAccount": None,
-            "computeUnitPriceMicroLamports": PRIORITY_FEE_MICROLAMPORTS
-        }
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(JUP_SWAP, json=payload)
-            if response.status_code == 200:
-                return response.json()
-            return None
-    except Exception as e:
-        print(f"Jupiter swap error: {e}")
-        return None
+    """Get swap transaction from Jupiter API with retry mechanism"""
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            # Apply rate limiting
+            await rate_limiter.wait_if_needed()
+            
+            # Add delay between requests
+            if attempt > 0:
+                await asyncio.sleep(1 + attempt)  # Progressive delay
+            
+            payload = {
+                "quoteResponse": quote,
+                "userPublicKey": user_public_key,
+                "wrapAndUnwrapSol": True,
+                "useSharedAccounts": True,
+                "feeAccount": None,
+                "trackingAccount": None,
+                "computeUnitPriceMicroLamports": PRIORITY_FEE_MICROLAMPORTS
+            }
+            
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(JUP_SWAP, json=payload)
+                
+                if response.status_code == 200:
+                    print(f"✅ Jupiter swap transaction successful (attempt {attempt + 1})")
+                    return response.json()
+                elif response.status_code == 429:
+                    print(f"⚠️ Jupiter swap rate limited, retrying in {1 + attempt}s...")
+                    continue
+                else:
+                    print(f"⚠️ Jupiter swap HTTP {response.status_code} (attempt {attempt + 1})")
+                    
+        except asyncio.TimeoutError:
+            print(f"⏰ Jupiter swap timeout (attempt {attempt + 1})")
+        except Exception as e:
+            print(f"❌ Jupiter swap error: {e} (attempt {attempt + 1})")
+    
+    print(f"❌ Failed to get Jupiter swap transaction after {max_retries} attempts")
+    return None
 
 async def get_token_balance(mint: str, owner: str) -> float:
     """Get token balance for a specific mint (simplified)"""
@@ -244,16 +358,39 @@ async def get_wallet_balance_usd() -> float:
         return 1000.0  # Fallback balance
 
 async def get_sol_price_usd() -> Optional[float]:
-    """Get SOL price in USD"""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd")
-            if response.status_code == 200:
-                data = response.json()
-                return data["solana"]["usd"]
-            return None
-    except Exception:
-        return None
+    """Get SOL price in USD with retry mechanism"""
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            # Apply rate limiting
+            await rate_limiter.wait_if_needed()
+            
+            # Add delay between requests
+            if attempt > 0:
+                await asyncio.sleep(2 + attempt)  # Progressive delay
+            
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd")
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    price = data["solana"]["usd"]
+                    print(f"✅ SOL price fetched: ${price:.2f} (attempt {attempt + 1})")
+                    return price
+                elif response.status_code == 429:
+                    print(f"⚠️ CoinGecko rate limited, retrying in {2 + attempt}s...")
+                    continue
+                else:
+                    print(f"⚠️ CoinGecko HTTP {response.status_code} (attempt {attempt + 1})")
+                    
+        except asyncio.TimeoutError:
+            print(f"⏰ SOL price timeout (attempt {attempt + 1})")
+        except Exception as e:
+            print(f"❌ SOL price error: {e} (attempt {attempt + 1})")
+    
+    print(f"❌ Failed to fetch SOL price after {max_retries} attempts")
+    return None
 
 async def calculate_trade_amount() -> float:
     """Calculate trade amount based on percentage or fixed amount"""
@@ -475,11 +612,26 @@ async def watcher(pos: Position, send):
             except:
                 pass
 
+    consecutive_failures = 0
+    max_consecutive_failures = 10
+    
     while pos.active:
         price = await get_price_vs_sol(pos.mint)
         if price is None:
-            await asyncio.sleep(PRICE_POLL_SECONDS)
+            consecutive_failures += 1
+            print(f"⚠️ Price fetch failed for {pos.mint} (failure #{consecutive_failures})")
+            
+            if consecutive_failures >= max_consecutive_failures:
+                await send(f"❌ Too many price fetch failures for {pos.mint}. Stopping watcher.")
+                pos.active = False
+                break
+            
+            # Increase sleep time on consecutive failures
+            sleep_time = PRICE_POLL_SECONDS * (1 + consecutive_failures * 0.5)
+            await asyncio.sleep(sleep_time)
             continue
+        else:
+            consecutive_failures = 0  # Reset on successful fetch
 
         if price > pos.peak_price:
             pos.peak_price = price
@@ -514,11 +666,25 @@ async def watcher(pos: Position, send):
         trigger = pos.last_exit_price * (1.0 + REENTRY_CONFIRM_PCT / 100.0)
         await send(f"♻️ Re-entry armed for {pos.mint}: trigger > {trigger:.10f} SOL.")
         deadline = time.time() + 10 * 60  # 10 minutes window
+        reentry_failures = 0
+        max_reentry_failures = 5
+        
         while time.time() < deadline:
             price = await get_price_vs_sol(pos.mint)
             if price is None:
-                await asyncio.sleep(PRICE_POLL_SECONDS)
+                reentry_failures += 1
+                print(f"⚠️ Re-entry price fetch failed for {pos.mint} (failure #{reentry_failures})")
+                
+                if reentry_failures >= max_reentry_failures:
+                    await send(f"❌ Too many price fetch failures during re-entry for {pos.mint}. Aborting re-entry.")
+                    break
+                
+                # Increase sleep time on consecutive failures
+                sleep_time = PRICE_POLL_SECONDS * (1 + reentry_failures * 0.5)
+                await asyncio.sleep(sleep_time)
                 continue
+            else:
+                reentry_failures = 0  # Reset on successful fetch
             if price >= trigger:
                 trade_amount = await calculate_trade_amount()
                 tx = await jupiter_buy(pos.mint, trade_amount)
@@ -614,10 +780,24 @@ async def cmd_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"   ⏰ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
-    await prewarm_quote(mint)
+    # Pre-warm quote with error handling
+    try:
+        await prewarm_quote(mint)
+    except Exception as e:
+        print(f"⚠️ Pre-warm quote failed: {e}")
+    
+    # Get price with better error handling
+    print(f"🔍 Fetching price for {mint}...")
     price = await get_price_vs_sol(mint)
     if price is None:
-        await update.message.reply_text("Couldn’t fetch price. Try again.")
+        await update.message.reply_text(
+            f"❌ **Couldn't fetch price for {mint[:8]}...**\n\n"
+            f"**Possible reasons:**\n"
+            f"• Token doesn't exist\n"
+            f"• API rate limit exceeded\n"
+            f"• Network issues\n\n"
+            f"**Try again in a few seconds.**"
+        )
         return
     if mint in positions and positions[mint].active:
         await update.message.reply_text("Already in a position on this token.")
